@@ -1,0 +1,1089 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CMR Segmentation - Browser-based Cardiac MRI Segmentation</title>
+    <meta name="description" content="Privacy-preserving cardiac MRI segmentation running entirely in your browser. No data leaves your device.">
+    <script src="https://unpkg.com/dicom-parser@1.8.13/dist/dicomParser.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #1a1a2e; color: #eee; min-height: 100vh; padding: 20px;
+        }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 { text-align: center; margin-bottom: 8px; font-size: 1.6em; color: #e94560; }
+        .subtitle { text-align: center; color: #888; margin-bottom: 20px; font-size: 0.9em; }
+        .privacy-badge {
+            display: inline-block; background: #16213e; border: 1px solid #0f3460;
+            border-radius: 20px; padding: 4px 14px; font-size: 0.8em; color: #4ecca3;
+        }
+        .disclaimer {
+            background: #2a1a1a; border: 1px solid #c73651; border-radius: 6px;
+            padding: 10px 16px; margin-bottom: 16px; font-size: 0.85em;
+            color: #f0a4a4; text-align: center; line-height: 1.5;
+        }
+        .disclaimer strong { color: #ff6b7a; }
+        .controls {
+            display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 16px;
+        }
+        button, .file-label {
+            background: #e94560; color: white; border: none; padding: 10px 20px;
+            border-radius: 6px; cursor: pointer; font-size: 0.9em;
+        }
+        button:hover, .file-label:hover { background: #c73651; }
+        button:disabled { background: #555; cursor: not-allowed; }
+        .file-label { display: inline-block; }
+        input[type="file"] { display: none; }
+        select {
+            background: #16213e; color: #eee; border: 1px solid #333;
+            padding: 8px 12px; border-radius: 6px; font-size: 0.9em;
+        }
+        #status { text-align: center; padding: 10px; font-size: 0.9em; color: #4ecca3; min-height: 36px; }
+        .progress-indeterminate {
+            width: 100%; height: 6px; background: #333; border-radius: 3px; margin: 8px 0; overflow: hidden;
+        }
+        .progress-indeterminate .bar {
+            width: 30%; height: 100%; background: linear-gradient(90deg, #4ecca3, #e94560); border-radius: 3px;
+            animation: indeterminate 1.2s infinite ease-in-out;
+        }
+        @keyframes indeterminate {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(430%); }
+        }
+        .slice-nav { text-align: center; margin: 8px 0; font-size: 0.9em; }
+        .viewer-canvases { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
+        .canvas-box {
+            width: 360px; height: 360px;
+            display: flex; align-items: center; justify-content: center;
+            border: 2px solid #333; border-radius: 8px; background: #000;
+        }
+        .canvas-box canvas {
+            display: block; image-rendering: auto;
+        }
+        .nav-arrow { cursor: pointer; padding: 2px 8px; color: #4ecca3; user-select: none; font-size: 1.1em; }
+        .nav-arrow:hover { color: #e94560; }
+        .legend {
+            display: flex; gap: 16px; justify-content: center; margin: 12px 0; flex-wrap: wrap;
+        }
+        .legend-item { display: flex; align-items: center; gap: 6px; font-size: 0.85em; }
+        .legend-color { width: 16px; height: 16px; border-radius: 3px; border: 1px solid #555; }
+        .results-table {
+            border-collapse: collapse; margin: 16px auto;
+            font-family: inherit; font-size: 0.9em; color: #eee;
+        }
+        .results-table th, .results-table td {
+            padding: 4px 12px; text-align: center; border-bottom: 1px solid #333;
+            font-family: inherit; font-size: inherit; font-weight: normal;
+        }
+        .results-table th { color: #e94560; }
+        #metricsDiv h3 {
+            font-family: inherit; font-size: 1em; font-weight: 600;
+            color: #e94560; margin: 16px 0 8px; text-align: center;
+        }
+        .info {
+            background: #16213e; border-radius: 8px; padding: 16px; margin-top: 16px;
+            font-size: 0.85em; line-height: 1.6; color: #aaa; text-align: left;
+        }
+        .info a { color: #4ecca3; }
+        .progress { width: 100%; height: 6px; background: #333; border-radius: 3px; margin: 8px 0; }
+        .progress-bar { height: 100%; background: #4ecca3; border-radius: 3px; transition: width 0.3s; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>CMR Segmentation</h1>
+    <p class="subtitle">
+        Browser-based cardiac MRI segmentation &mdash; all processing runs locally
+        <br><span class="privacy-badge">No data leaves your device</span>
+    </p>
+
+    <div class="controls">
+        <select id="contrastSelect">
+            <option value="cine">Cine</option>
+            <option value="scar">Scar / LGE</option>
+        </select>
+        <span id="modelStatus" style="font-size:0.85em;color:#888;display:inline-block;width:160px;text-align:center;"></span>
+        <label class="file-label" for="dicomFiles">Load DICOM</label>
+        <input type="file" id="dicomFiles" multiple accept=".dcm,.DCM,.dicom,*">
+        <a href="sample_data/cine_sample.zip" style="background:#0f3460;color:#4ecca3;padding:10px 20px;border-radius:6px;text-decoration:none;font-size:0.9em;">Cine Sample</a>
+        <a href="sample_data/scar_sample.zip" style="background:#0f3460;color:#4ecca3;padding:10px 20px;border-radius:6px;text-decoration:none;font-size:0.9em;">Scar Sample</a>
+    </div>
+
+    <div id="status">Select contrast and load DICOM files to begin.</div>
+    <div class="progress-indeterminate" id="progressContainer" style="visibility:hidden">
+        <div class="bar"></div>
+    </div>
+
+    <div class="viewer-canvases">
+        <div>
+            <div class="slice-nav" id="sliceNav" style="visibility:hidden;">
+                <span class="nav-arrow" id="prevSlice">&larr;</span>
+                Slice <span id="sliceLabel">1/1</span>
+                <span class="nav-arrow" id="nextSlice">&rarr;</span>
+                &nbsp;&nbsp;
+                <span class="nav-arrow" id="prevPhase">&larr;</span>
+                Phase <span id="phaseLabel">1/1</span>
+                <span class="nav-arrow" id="nextPhase">&rarr;</span>
+            </div>
+            <div class="canvas-box"><canvas id="inputCanvas" width="320" height="320"></canvas></div>
+            <div style="text-align:center;font-size:0.85em;color:#888;margin-top:4px;">Input</div>
+        </div>
+        <div>
+            <div class="slice-nav" style="visibility:hidden;">&nbsp;</div>
+            <div class="canvas-box"><canvas id="overlayCanvas" width="320" height="320"></canvas></div>
+            <div style="text-align:center;font-size:0.85em;color:#888;margin-top:4px;">Segmentation Overlay</div>
+        </div>
+    </div>
+
+    <div class="legend" id="cineLegend">
+        <div class="legend-item"><div class="legend-color" style="background:#e94560;"></div> LV Cavity</div>
+        <div class="legend-item"><div class="legend-color" style="background:#4ecca3;"></div> LV Myocardium</div>
+        <div class="legend-item"><div class="legend-color" style="background:#0f3460;"></div> RV Cavity</div>
+    </div>
+    <div class="legend" id="scarLegend" style="display:none">
+        <div class="legend-item"><div class="legend-color" style="background:#e94560;"></div> LV Cavity</div>
+        <div class="legend-item"><div class="legend-color" style="background:#4ecca3;"></div> Normal Myocardium</div>
+        <div class="legend-item"><div class="legend-color" style="background:#f0e130;"></div> Scar</div>
+        <div class="legend-item"><div class="legend-color" style="background:#0f3460;"></div> MVO</div>
+    </div>
+
+    <div style="display:flex;justify-content:center;gap:40px;margin:12px 0;">
+        <button id="runBtn" disabled>Run Segmentation</button>
+        <button id="downloadBtn" disabled style="background:#555;cursor:not-allowed;">Download Results</button>
+    </div>
+
+    <div id="metricsDiv" style="display:none">
+        <h3>Measurements</h3>
+        <table class="results-table" id="metricsTable">
+            <thead><tr><th>Metric</th><th>Value</th></tr></thead>
+            <tbody></tbody>
+        </table>
+    </div>
+
+    <div class="info">
+        <strong style="color:#e94560;">Supported formats:</strong> Cine (multi-phase 2D) or Scar/LGE (single-phase 2D).
+        One DICOM file per slice/phase image. Multi-frame (composite/enhanced) DICOMs are not supported &mdash;
+        use single-image DICOMs and load all of them at once. Parsing is based on DICOM header tags;
+        file names do not matter. For additional format support, contact
+        Dr. Xue Feng (xf4j@virginia.edu).<br><br>
+        <strong style="color:#e94560;">Output:</strong> Click "Download Results" to get a ZIP with NIfTI volumes (.nii.gz) and CSV measurements.<br><br>
+        <strong style="color:#e94560;">Try it:</strong> Click "Cine Sample" or "Scar Sample" above to download sample DICOM files.
+        Unzip, then select all .dcm files in the DICOM file picker.<br><br>
+        <strong style="color:#e94560;">Reference:</strong> Feng X, Meyer CH. CPU-based fast cardiac cine MRI segmentation
+        using lightweight CNNs and knowledge distillation. <em>NMR in Biomedicine</em> (under review).<br>
+        <a href="https://github.com/xf4j/cmrsegmentation" target="_blank">github.com/xf4j/cmrsegmentation</a>
+    </div>
+
+    <div class="disclaimer">
+        <strong>For research use only.</strong> This tool is not FDA cleared and is not intended for clinical
+        diagnosis or treatment decisions.
+    </div>
+</div>
+
+<script>
+// ============================================================
+// Constants
+// ============================================================
+const STANDARD_SIZE = 224;
+const CINE_COLORS = [[0,0,0,0], [233,69,96,180], [78,204,163,180], [15,52,96,180]];
+const SCAR_COLORS = [[0,0,0,0], [233,69,96,180], [78,204,163,180], [240,225,48,180], [15,52,96,180]];
+
+const MODEL_URLS = {
+    'cine': ['models/cine_model.onnx'],
+    'scar': ['models/scar_model.onnx.aa', 'models/scar_model.onnx.ab'],
+};
+
+let modelLoaded = false;
+let currentContrast = null;
+let dicomData = null;
+let allLabels = null;
+let lastMetrics = null;
+let currentSlice = 0;
+let currentPhase = 0;
+
+// ============================================================
+// Inference Worker (keeps UI thread responsive during ONNX run)
+// ============================================================
+let worker = null;
+const pendingTasks = new Map();
+let nextTaskId = 0;
+let modelLoadResolver = null;
+let modelLoadRejecter = null;
+
+const WORKER_VERSION = 3;
+function setupWorker() {
+    if (worker) worker.terminate();
+    worker = new Worker(`inference-worker.js?v=${WORKER_VERSION}`);
+    worker.onmessage = (e) => {
+        const msg = e.data;
+        if (msg.type === 'loaded') {
+            if (modelLoadResolver) { modelLoadResolver(); modelLoadResolver = null; }
+        } else if (msg.type === 'load_error') {
+            if (modelLoadRejecter) { modelLoadRejecter(new Error(msg.error)); modelLoadRejecter = null; }
+        } else if (msg.type === 'result') {
+            const t = pendingTasks.get(msg.taskId);
+            if (t) { pendingTasks.delete(msg.taskId); t.resolve(msg.labelMap); }
+        } else if (msg.type === 'infer_error') {
+            const t = pendingTasks.get(msg.taskId);
+            if (t) { pendingTasks.delete(msg.taskId); t.reject(new Error(msg.error)); }
+        }
+    };
+    worker.onerror = (e) => {
+        setStatus(`Worker error: ${e.message}`);
+    };
+}
+
+function loadModelInWorker(buf, contrast) {
+    return new Promise((resolve, reject) => {
+        modelLoadResolver = resolve;
+        modelLoadRejecter = reject;
+        worker.postMessage({ type: 'load', modelBuffer: buf, contrast }, [buf]);
+    });
+}
+
+function inferInWorker(pixels, rows, cols, pixelSpacing) {
+    return new Promise((resolve, reject) => {
+        const taskId = nextTaskId++;
+        pendingTasks.set(taskId, { resolve, reject });
+        const copy = new Float32Array(pixels);
+        worker.postMessage(
+            { type: 'infer', taskId, pixels: copy, rows, cols, psY: pixelSpacing[0], psX: pixelSpacing[1] },
+            [copy.buffer],
+        );
+    });
+}
+
+// ============================================================
+// Model Loading (auto, based on contrast)
+// ============================================================
+async function loadModel(contrast) {
+    if (contrast === currentContrast && modelLoaded) return;
+    modelLoaded = false;
+    currentContrast = null;
+    checkReady();
+
+    const urls = MODEL_URLS[contrast];
+    const statusEl = document.getElementById('modelStatus');
+    setStatus(`Loading ${contrast} model...`);
+    statusEl.textContent = 'loading...';
+
+    try {
+        let buf;
+        if (urls.length === 1) {
+            const response = await fetch(urls[0]);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            buf = await response.arrayBuffer();
+        } else {
+            const parts = [];
+            let totalSize = 0;
+            for (const url of urls) {
+                const response = await fetch(url);
+                if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`);
+                const part = await response.arrayBuffer();
+                parts.push(part);
+                totalSize += part.byteLength;
+            }
+            buf = new ArrayBuffer(totalSize);
+            const view = new Uint8Array(buf);
+            let offset = 0;
+            for (const part of parts) {
+                view.set(new Uint8Array(part), offset);
+                offset += part.byteLength;
+            }
+        }
+
+        const sizeMB = (buf.byteLength / 1e6).toFixed(1);
+        setupWorker();
+        await loadModelInWorker(buf, contrast);
+        modelLoaded = true;
+        currentContrast = contrast;
+        statusEl.textContent = `${contrast} model (${sizeMB} MB)`;
+        setStatus(`${contrast} model loaded. Load DICOM files to begin.`);
+        checkReady();
+    } catch (err) {
+        statusEl.textContent = 'failed';
+        setStatus(`Failed to load model: ${err.message}`);
+    }
+}
+
+window.addEventListener('load', () => {
+    loadModel(document.getElementById('contrastSelect').value);
+});
+
+document.getElementById('contrastSelect').addEventListener('change', async () => {
+    const contrast = document.getElementById('contrastSelect').value;
+    document.getElementById('cineLegend').style.display = contrast === 'cine' ? 'flex' : 'none';
+    document.getElementById('scarLegend').style.display = contrast === 'scar' ? 'flex' : 'none';
+    clearResults();
+    await loadModel(contrast);
+});
+
+function checkReady() {
+    document.getElementById('runBtn').disabled = !(modelLoaded && dicomData);
+}
+
+function clearResults() {
+    allLabels = null;
+    lastMetrics = null;
+    dicomData = null;
+    currentSlice = 0;
+    currentPhase = 0;
+    document.getElementById('metricsDiv').style.display = 'none';
+    document.getElementById('sliceNav').style.visibility = 'hidden';
+    const dl = document.getElementById('downloadBtn');
+    dl.disabled = true;
+    dl.style.background = '#555';
+    dl.style.cursor = 'not-allowed';
+    document.getElementById('runBtn').disabled = true;
+    for (const id of ['inputCanvas', 'overlayCanvas']) {
+        const c = document.getElementById(id);
+        c.getContext('2d').clearRect(0, 0, c.width, c.height);
+        c.style.width = '';
+        c.style.height = '';
+    }
+}
+
+// ============================================================
+// DICOM Loading
+// ============================================================
+function parseDicomFile(buffer) {
+    const byteArray = new Uint8Array(buffer);
+    const dataSet = dicomParser.parseDicom(byteArray);
+
+    const rows = dataSet.uint16('x00280010');
+    const cols = dataSet.uint16('x00280011');
+    const bitsAllocated = dataSet.uint16('x00280100') || 16;
+    const pixelRepresentation = dataSet.uint16('x00280103') || 0;
+    const rescaleSlope = parseFloat(dataSet.string('x00281053')) || 1;
+    const rescaleIntercept = parseFloat(dataSet.string('x00281052')) || 0;
+
+    const psStr = dataSet.string('x00280030');
+    const pixelSpacing = psStr ? psStr.split('\\').map(parseFloat) : [1.37, 1.37];
+    const sliceThickness = parseFloat(dataSet.string('x00180050')) || 8.0;
+
+    const ipStr = dataSet.string('x00200032');
+    const imagePosition = ipStr ? ipStr.split('\\').map(parseFloat) : [0, 0, 0];
+    const iopStr = dataSet.string('x00200037');
+    const imageOrientation = iopStr
+        ? iopStr.split('\\').map(parseFloat)
+        : [1, 0, 0, 0, 1, 0];
+    const instanceNumber = parseInt(dataSet.string('x00200013')) || 0;
+
+    let pixels;
+    const pixelDataElement = dataSet.elements.x7fe00010;
+    if (pixelDataElement) {
+        const pixelDataOffset = pixelDataElement.dataOffset;
+        const numPixels = rows * cols;
+        pixels = new Float32Array(numPixels);
+        const view = new DataView(buffer);
+        for (let i = 0; i < numPixels; i++) {
+            let val;
+            if (bitsAllocated === 16) {
+                val = pixelRepresentation === 1
+                    ? view.getInt16(pixelDataOffset + i * 2, true)
+                    : view.getUint16(pixelDataOffset + i * 2, true);
+            } else {
+                val = byteArray[pixelDataOffset + i];
+            }
+            pixels[i] = val * rescaleSlope + rescaleIntercept;
+        }
+    }
+
+    return { rows, cols, pixelSpacing, sliceThickness, imagePosition, imageOrientation, instanceNumber, pixels };
+}
+
+// ============================================================
+// PCS transform
+// Faithful JS port of radai_analysis/pre_processing_functions.py:
+//   get_rotation_matrix / get_transform_to_pcs / apply_transform_to_pcs
+// rot_mat rows are (i, j, k) directions in patient coords:
+//   i = fastest axis (cols), j = rows, k = slices
+// Canonical PCS: i along RL (X+), j along AP (Y+), k along SI (Z+)
+// ============================================================
+function getRotationMatrix(iop) {
+    const X = [iop[0], iop[1], iop[2]];
+    const Y = [iop[3], iop[4], iop[5]];
+    const Z = [
+        X[1] * Y[2] - X[2] * Y[1],
+        X[2] * Y[0] - X[0] * Y[2],
+        X[0] * Y[1] - X[1] * Y[0],
+    ];
+    return [X, Y, Z];
+}
+
+function getTransformToPCS(rotMat) {
+    let siDirection = 0;
+    for (let i = 1; i < 3; i++) {
+        if (Math.abs(rotMat[i][2]) > Math.abs(rotMat[siDirection][2])) siDirection = i;
+    }
+
+    let order;
+    if (siDirection === 0) {
+        if (Math.abs(rotMat[1][0]) >= Math.abs(rotMat[1][1])) order = [1, 2, 0];
+        else order = [2, 1, 0];
+    } else if (siDirection === 1) {
+        if (Math.abs(rotMat[0][0]) >= Math.abs(rotMat[0][1])) order = [0, 2, 1];
+        else order = [2, 0, 1];
+    } else {
+        if (Math.abs(rotMat[0][0]) >= Math.abs(rotMat[0][1])) order = [0, 1, 2];
+        else order = [1, 0, 2];
+    }
+
+    const newRotMat = [rotMat[order[0]], rotMat[order[1]], rotMat[order[2]]];
+    const flip = [
+        newRotMat[0][0] < 0,
+        newRotMat[1][1] < 0,
+        newRotMat[2][2] < 0,
+    ];
+
+    const planeMap = { 0: 'sagittal', 1: 'coronal', 2: 'axial' };
+    return { order, flip, plane: planeMap[siDirection] };
+}
+
+// Apply PCS transform to a 2D image (rows x cols).
+// In-plane action of the python 3D transform: optional row/col swap, plus
+// row/col flips when the post-transpose axes map cleanly onto the original
+// in-plane axes (axial input). For non-axial input (oblique SAX cine, etc.)
+// the flip indices reference the slice axis, so applying them per-slice
+// would mirror the image incorrectly — we skip flips in that case and rely
+// on the model's robustness to L-R / U-D orientation.
+function applyTransformToPCS2D(pixels, rows, cols, transform) {
+    const order = transform.order;
+    const flip = transform.flip;
+    const tp = [2 - order[2], 2 - order[1], 2 - order[0]];
+
+    const inPlaneTranspose = tp[0] === 0 && tp[1] === 2 && tp[2] === 1;
+    const inPlaneNoSwap = tp[0] === 0 && tp[1] === 1 && tp[2] === 2;
+    const inPlane = inPlaneTranspose || inPlaneNoSwap;
+
+    let h = rows, w = cols;
+    let buf = pixels;
+
+    if (inPlaneTranspose) {
+        const out = new Float32Array(rows * cols);
+        for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) {
+                out[x * rows + y] = buf[y * cols + x];
+            }
+        }
+        buf = out; h = cols; w = rows;
+    }
+
+    if (inPlane) {
+        if (flip[0]) {
+            const out = new Float32Array(h * w);
+            for (let y = 0; y < h; y++) {
+                for (let x = 0; x < w; x++) {
+                    out[y * w + (w - 1 - x)] = buf[y * w + x];
+                }
+            }
+            buf = out;
+        }
+        if (flip[1]) {
+            const out = new Float32Array(h * w);
+            for (let y = 0; y < h; y++) {
+                for (let x = 0; x < w; x++) {
+                    out[(h - 1 - y) * w + x] = buf[y * w + x];
+                }
+            }
+            buf = out;
+        }
+    }
+
+    return { pixels: buf, rows: h, cols: w };
+}
+
+async function handleDicomInput(files) {
+    if (files.length === 0) return;
+    clearResults();
+    const oc = document.getElementById('overlayCanvas');
+    oc.getContext('2d').clearRect(0, 0, oc.width, oc.height);
+    setStatus(`Parsing ${files.length} DICOM files...`);
+
+    try {
+        const dcmList = [];
+        for (const file of files) {
+            const buf = await file.arrayBuffer();
+            try {
+                dcmList.push(parseDicomFile(buf));
+            } catch (err) {
+                console.warn(`Skipping ${file.name}: ${err.message}`);
+            }
+        }
+
+        if (dcmList.length === 0) {
+            setStatus('No valid DICOM images found.');
+            return;
+        }
+
+        dcmList.sort((a, b) => {
+            const locA = a.imagePosition[2];
+            const locB = b.imagePosition[2];
+            if (Math.abs(locA - locB) > 0.1) return locB - locA;
+            return a.instanceNumber - b.instanceNumber;
+        });
+
+        const first = dcmList[0];
+        const rotMat = getRotationMatrix(first.imageOrientation);
+        const transform = getTransformToPCS(rotMat);
+
+        // Apply 2D PCS to all images. Track whether row/col were transposed so
+        // we can swap pixel spacing accordingly. Slice thickness is never
+        // promoted to in-plane: in 2D mode we never reshape the slice axis.
+        let inPlaneSwapped = false;
+        for (const dcm of dcmList) {
+            const t = applyTransformToPCS2D(dcm.pixels, dcm.rows, dcm.cols, transform);
+            if (t.rows !== dcm.rows || t.cols !== dcm.cols) inPlaneSwapped = true;
+            dcm.pixels = t.pixels;
+            dcm.rows = t.rows;
+            dcm.cols = t.cols;
+        }
+
+        const pixelSpacing = inPlaneSwapped
+            ? [first.pixelSpacing[1], first.pixelSpacing[0]]
+            : [first.pixelSpacing[0], first.pixelSpacing[1]];
+        const rows = dcmList[0].rows;
+        const cols = dcmList[0].cols;
+
+        const sliceGroups = {};
+        for (const dcm of dcmList) {
+            const loc = Math.round(dcm.imagePosition[2] * 10) / 10;
+            if (!sliceGroups[loc]) sliceGroups[loc] = [];
+            sliceGroups[loc].push(dcm);
+        }
+
+        const sliceLocs = Object.keys(sliceGroups).sort((a, b) => b - a);
+        const nSlices = sliceLocs.length;
+        const nPhases = sliceGroups[sliceLocs[0]].length;
+
+        const images = [];
+        for (const loc of sliceLocs) {
+            images.push(sliceGroups[loc].map(dcm => dcm.pixels));
+        }
+
+        // "Slice thickness" used for display and volume math is the actual
+        // physical distance between adjacent slice centers (Euclidean norm of
+        // ΔIPP). Using only IPP[2] would underestimate this for oblique
+        // acquisitions. Falls back to DICOM SliceThickness for single-slice.
+        let sliceThickness = first.sliceThickness;
+        if (nSlices > 1) {
+            const ipps = sliceLocs.map((loc) => sliceGroups[loc][0].imagePosition);
+            const ordered = ipps.slice().sort((a, b) => a[2] - b[2]);
+            let sum = 0;
+            for (let i = 1; i < ordered.length; i++) {
+                const dx = ordered[i][0] - ordered[i - 1][0];
+                const dy = ordered[i][1] - ordered[i - 1][1];
+                const dz = ordered[i][2] - ordered[i - 1][2];
+                sum += Math.sqrt(dx * dx + dy * dy + dz * dz);
+            }
+            sliceThickness = sum / (ordered.length - 1);
+        }
+
+        dicomData = { images, pixelSpacing, sliceThickness, nPhases, nSlices, rows, cols, transform };
+        setStatus(`Loaded: ${nSlices} slices, ${nPhases} phases.`);
+        currentSlice = 0;
+        currentPhase = 0;
+        document.getElementById('sliceNav').style.visibility = 'visible';
+        drawInput();
+        checkReady();
+    } catch (err) {
+        setStatus('Error parsing DICOM: ' + err.message);
+        console.error(err);
+    }
+}
+
+document.getElementById('dicomFiles').addEventListener('change', (e) => {
+    handleDicomInput(Array.from(e.target.files));
+    e.target.value = '';
+});
+
+// ============================================================
+// Inference
+// ============================================================
+document.getElementById('runBtn').addEventListener('click', async () => {
+    if (!modelLoaded || !dicomData) return;
+    const contrast = document.getElementById('contrastSelect').value;
+    const { images, pixelSpacing, nSlices, nPhases, rows, cols } = dicomData;
+
+    document.getElementById('runBtn').disabled = true;
+    document.getElementById('progressContainer').style.visibility = 'visible';
+    document.getElementById('downloadBtn').disabled = true;
+    const total = nSlices * nPhases;
+    let processed = 0;
+
+    allLabels = [];
+    const t0 = performance.now();
+    setStatus(`Processing 0/${total}...`);
+
+    try {
+        for (let sli = 0; sli < nSlices; sli++) {
+            const sliceLabels = [];
+            for (let pha = 0; pha < nPhases; pha++) {
+                setStatus(`Processing slice ${sli + 1}/${nSlices}, phase ${pha + 1}/${nPhases} (${processed + 1}/${total})`);
+                const labelMap = await inferInWorker(images[sli][pha], rows, cols, pixelSpacing);
+                sliceLabels.push(labelMap);
+                processed++;
+            }
+            allLabels.push(sliceLabels);
+        }
+    } catch (err) {
+        document.getElementById('progressContainer').style.visibility = 'hidden';
+        document.getElementById('runBtn').disabled = false;
+        setStatus(`Inference failed: ${err.message}`);
+        return;
+    }
+
+    // Volume-wide scar/MVO false-positive filter (port of _postprocess_scar tail)
+    if (contrast === 'scar') {
+        const MIN_SCAR_PIXELS = 50;
+        let scarTotal = 0, mvoTotal = 0;
+        for (let s = 0; s < nSlices; s++) {
+            for (let p = 0; p < nPhases; p++) {
+                const lbl = allLabels[s][p];
+                for (let i = 0; i < lbl.length; i++) {
+                    if (lbl[i] === 3) scarTotal++;
+                    else if (lbl[i] === 4) mvoTotal++;
+                }
+            }
+        }
+        const dropScar = scarTotal < MIN_SCAR_PIXELS;
+        const dropMvo = mvoTotal < MIN_SCAR_PIXELS;
+        if (dropScar || dropMvo) {
+            for (let s = 0; s < nSlices; s++) {
+                for (let p = 0; p < nPhases; p++) {
+                    const lbl = allLabels[s][p];
+                    for (let i = 0; i < lbl.length; i++) {
+                        if (dropScar && lbl[i] === 3) lbl[i] = 2;
+                        if (dropMvo && lbl[i] === 4) lbl[i] = 2;
+                    }
+                }
+            }
+        }
+    }
+
+    const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+    setStatus(`Done in ${elapsed}s. ${nSlices} slices x ${nPhases} phases = ${total} inferences.`);
+    document.getElementById('progressContainer').style.visibility = 'hidden';
+    document.getElementById('runBtn').disabled = false;
+    document.getElementById('downloadBtn').disabled = false;
+    document.getElementById('downloadBtn').style.background = '#e94560';
+    document.getElementById('downloadBtn').style.cursor = 'pointer';
+
+    document.getElementById('cineLegend').style.display = contrast === 'cine' ? 'flex' : 'none';
+    document.getElementById('scarLegend').style.display = contrast === 'scar' ? 'flex' : 'none';
+
+    document.getElementById('sliceNav').style.display = 'block';
+    currentSlice = 0;
+    currentPhase = 0;
+    drawOverlay();
+
+    if (contrast === 'cine' && nPhases > 1) {
+        calculateCineMetrics();
+    } else if (contrast === 'scar') {
+        calculateScarMetrics();
+    }
+});
+
+// ============================================================
+// Cine Metrics
+// ============================================================
+function calculateCineMetrics() {
+    const { nSlices, nPhases, pixelSpacing, sliceThickness, rows, cols } = dicomData;
+    const voxelVolume = pixelSpacing[0] * pixelSpacing[1] * sliceThickness / 1000.0;
+
+    const lvVolumes = new Float32Array(nPhases);
+    const rvVolumes = new Float32Array(nPhases);
+    for (let pha = 0; pha < nPhases; pha++) {
+        for (let sli = 0; sli < nSlices; sli++) {
+            const lbl = allLabels[sli][pha];
+            let lvCount = 0, rvCount = 0;
+            for (let i = 0; i < lbl.length; i++) {
+                if (lbl[i] === 1) lvCount++;
+                if (lbl[i] === 3) rvCount++;
+            }
+            lvVolumes[pha] += lvCount;
+            rvVolumes[pha] += rvCount;
+        }
+    }
+
+    let edPhase = 0, esPhase = 0, maxLV = 0, minLV = Infinity;
+    for (let p = 0; p < nPhases; p++) {
+        if (lvVolumes[p] > maxLV) { maxLV = lvVolumes[p]; edPhase = p; }
+        if (lvVolumes[p] < minLV) { minLV = lvVolumes[p]; esPhase = p; }
+    }
+
+    const lvEDV = maxLV * voxelVolume;
+    const lvESV = minLV * voxelVolume;
+    const rvEDV = rvVolumes[edPhase] * voxelVolume;
+    const rvESV = rvVolumes[esPhase] * voxelVolume;
+    const lvEF = (lvEDV - lvESV) / lvEDV;
+    const rvEF = (rvEDV - rvESV) / rvEDV;
+
+    const tbody = document.querySelector('#metricsTable tbody');
+    tbody.innerHTML = '';
+    lastMetrics = [
+        ['Rows', rows],
+        ['Columns', cols],
+        ['Pixel Spacing', `${pixelSpacing[0].toFixed(3)} × ${pixelSpacing[1].toFixed(3)} mm`],
+        ['Slice Thickness', sliceThickness.toFixed(2) + ' mm'],
+        ['Total Phases', nPhases],
+        ['ED Phase', edPhase + 1],
+        ['ES Phase', esPhase + 1],
+        ['LV EDV', lvEDV.toFixed(1) + ' mL'],
+        ['LV ESV', lvESV.toFixed(1) + ' mL'],
+        ['LV EF', (lvEF * 100).toFixed(1) + '%'],
+        ['RV EDV', rvEDV.toFixed(1) + ' mL'],
+        ['RV ESV', rvESV.toFixed(1) + ' mL'],
+        ['RV EF', (rvEF * 100).toFixed(1) + '%'],
+    ];
+    for (const [k, v] of lastMetrics) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${k}</td><td>${v}</td>`;
+        tbody.appendChild(tr);
+    }
+    document.getElementById('metricsDiv').style.display = 'block';
+}
+
+// ============================================================
+// Scar Metrics
+// ============================================================
+function calculateScarMetrics() {
+    const { nSlices, nPhases, pixelSpacing, sliceThickness, rows, cols } = dicomData;
+    const voxelVolume = pixelSpacing[0] * pixelSpacing[1] * sliceThickness / 1000.0;
+
+    let myoTotal = 0, scarTotal = 0, mvoTotal = 0;
+    for (let sli = 0; sli < nSlices; sli++) {
+        for (let pha = 0; pha < nPhases; pha++) {
+            const lbl = allLabels[sli][pha];
+            for (let i = 0; i < lbl.length; i++) {
+                if (lbl[i] === 2) myoTotal++;
+                if (lbl[i] === 3) scarTotal++;
+                if (lbl[i] === 4) mvoTotal++;
+            }
+        }
+    }
+
+    const myoVol = myoTotal * voxelVolume;
+    const scarVol = scarTotal * voxelVolume;
+    const mvoVol = mvoTotal * voxelVolume;
+    const totalMyo = myoTotal + scarTotal + mvoTotal;
+    const scarPct = totalMyo > 0 ? (scarTotal / totalMyo * 100) : 0;
+    const mvoPct = totalMyo > 0 ? (mvoTotal / totalMyo * 100) : 0;
+
+    const tbody = document.querySelector('#metricsTable tbody');
+    tbody.innerHTML = '';
+    lastMetrics = [
+        ['Rows', rows],
+        ['Columns', cols],
+        ['Pixel Spacing', `${pixelSpacing[0].toFixed(3)} × ${pixelSpacing[1].toFixed(3)} mm`],
+        ['Slice Thickness', sliceThickness.toFixed(2) + ' mm'],
+        ['Total Phases', nPhases],
+        ['Myocardium', myoVol.toFixed(1) + ' mL'],
+        ['Scar', scarVol.toFixed(1) + ' mL (' + scarPct.toFixed(1) + '%)'],
+        ['MVO', mvoVol.toFixed(1) + ' mL (' + mvoPct.toFixed(1) + '%)'],
+    ];
+    for (const [k, v] of lastMetrics) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${k}</td><td>${v}</td>`;
+        tbody.appendChild(tr);
+    }
+    document.getElementById('metricsDiv').style.display = 'block';
+}
+
+// ============================================================
+// Drawing
+// ============================================================
+function drawInput() {
+    if (!dicomData) return;
+    drawGrayscale(document.getElementById('inputCanvas'), dicomData.images[currentSlice][currentPhase], dicomData.cols, dicomData.rows);
+    updateSliceLabel();
+}
+
+function drawOverlay() {
+    if (!dicomData || !allLabels) return;
+    drawInput();
+    const contrast = document.getElementById('contrastSelect').value;
+    const colors = contrast === 'cine' ? CINE_COLORS : SCAR_COLORS;
+    // Restore the 224x224 label back onto the input grid so display alignment
+    // matches the inverse of preprocess (resize to STANDARD_SPACING + center
+    // crop/pad), not a naive stretch from 224 to (rows, cols).
+    const labelOnGrid = restoreLabelToOriginal(
+        allLabels[currentSlice][currentPhase],
+        dicomData.rows, dicomData.cols, dicomData.pixelSpacing,
+    );
+    drawOverlayCanvas(document.getElementById('overlayCanvas'),
+        dicomData.images[currentSlice][currentPhase],
+        dicomData.cols, dicomData.rows, labelOnGrid, colors);
+    updateSliceLabel();
+}
+
+const CANVAS_BOX_PX = 360;
+function fitCanvas(canvas, w, h) {
+    canvas.width = w; canvas.height = h;
+    const scale = Math.min(CANVAS_BOX_PX / w, CANVAS_BOX_PX / h);
+    canvas.style.width = Math.round(w * scale) + 'px';
+    canvas.style.height = Math.round(h * scale) + 'px';
+}
+
+function drawGrayscale(canvas, data, w, h) {
+    fitCanvas(canvas, w, h);
+    const ctx = canvas.getContext('2d');
+    const imgData = ctx.createImageData(w, h);
+    let min = Infinity, max = -Infinity;
+    for (let i = 0; i < data.length; i++) {
+        if (data[i] < min) min = data[i]; if (data[i] > max) max = data[i];
+    }
+    const range = max - min || 1;
+    for (let i = 0; i < w * h; i++) {
+        const v = Math.round(((data[i] - min) / range) * 255);
+        imgData.data[i * 4] = v; imgData.data[i * 4 + 1] = v;
+        imgData.data[i * 4 + 2] = v; imgData.data[i * 4 + 3] = 255;
+    }
+    ctx.putImageData(imgData, 0, 0);
+}
+
+function drawOverlayCanvas(canvas, data, w, h, labelMap, colors) {
+    fitCanvas(canvas, w, h);
+    const ctx = canvas.getContext('2d');
+    const imgData = ctx.createImageData(w, h);
+    let min = Infinity, max = -Infinity;
+    for (let i = 0; i < data.length; i++) {
+        if (data[i] < min) min = data[i]; if (data[i] > max) max = data[i];
+    }
+    const range = max - min || 1;
+    for (let i = 0; i < w * h; i++) {
+        const gv = ((data[i] - min) / range) * 255;
+        const cls = labelMap[i];
+        const color = colors[cls] || [0, 0, 0, 0];
+        const alpha = color[3] / 255;
+        imgData.data[i * 4] = Math.round(gv * (1 - alpha) + color[0] * alpha);
+        imgData.data[i * 4 + 1] = Math.round(gv * (1 - alpha) + color[1] * alpha);
+        imgData.data[i * 4 + 2] = Math.round(gv * (1 - alpha) + color[2] * alpha);
+        imgData.data[i * 4 + 3] = 255;
+    }
+    ctx.putImageData(imgData, 0, 0);
+}
+
+function updateSliceLabel() {
+    if (!dicomData) return;
+    document.getElementById('sliceLabel').textContent = `${currentSlice + 1}/${dicomData.nSlices}`;
+    document.getElementById('phaseLabel').textContent = `${currentPhase + 1}/${dicomData.nPhases}`;
+}
+
+// ============================================================
+// Navigation
+// ============================================================
+document.getElementById('prevSlice').addEventListener('click', () => {
+    if (!dicomData) return;
+    currentSlice = Math.max(0, currentSlice - 1);
+    allLabels ? drawOverlay() : drawInput();
+});
+document.getElementById('nextSlice').addEventListener('click', () => {
+    if (!dicomData) return;
+    currentSlice = Math.min(dicomData.nSlices - 1, currentSlice + 1);
+    allLabels ? drawOverlay() : drawInput();
+});
+document.getElementById('prevPhase').addEventListener('click', () => {
+    if (!dicomData) return;
+    currentPhase = Math.max(0, currentPhase - 1);
+    allLabels ? drawOverlay() : drawInput();
+});
+document.getElementById('nextPhase').addEventListener('click', () => {
+    if (!dicomData) return;
+    currentPhase = Math.min(dicomData.nPhases - 1, currentPhase + 1);
+    allLabels ? drawOverlay() : drawInput();
+});
+
+// ============================================================
+// NIfTI-1 Writer
+// ============================================================
+function createNifti1(data, dims, pixdim, dtype) {
+    const bytesPerVoxel = dtype === 2 ? 1 : dtype === 4 ? 2 : 4;
+    const nVoxels = dims.reduce((a, b) => a * b, 1);
+    const voxOffset = 352;
+    const totalSize = voxOffset + nVoxels * bytesPerVoxel;
+    const buf = new ArrayBuffer(totalSize);
+    const view = new DataView(buf);
+
+    view.setInt32(0, 348, true);
+    view.setUint8(38, 'r'.charCodeAt(0));
+    view.setInt16(40, dims.length, true);
+    for (let i = 0; i < 7; i++) {
+        view.setInt16(42 + i * 2, i < dims.length ? dims[i] : 1, true);
+    }
+    view.setInt16(70, dtype, true);
+    view.setInt16(72, bytesPerVoxel * 8, true);
+    view.setFloat32(76, 1.0, true);
+    for (let i = 0; i < 7; i++) {
+        view.setFloat32(80 + i * 4, i < pixdim.length ? pixdim[i] : 1.0, true);
+    }
+    view.setFloat32(108, voxOffset, true);
+    view.setFloat32(112, 1.0, true);
+    view.setFloat32(116, 0.0, true);
+    view.setUint8(123, dims.length >= 4 ? 10 : 2);
+    view.setInt16(252, 0, true);
+    view.setInt16(254, 1, true);
+
+    const dx = pixdim[0] || 1.0;
+    const dy = pixdim[1] || 1.0;
+    const dz = pixdim[2] || 1.0;
+    view.setFloat32(280, -dx, true);
+    view.setFloat32(284, 0, true);
+    view.setFloat32(288, 0, true);
+    view.setFloat32(292, 0, true);
+    view.setFloat32(296, 0, true);
+    view.setFloat32(300, -dy, true);
+    view.setFloat32(304, 0, true);
+    view.setFloat32(308, 0, true);
+    view.setFloat32(312, 0, true);
+    view.setFloat32(316, 0, true);
+    view.setFloat32(320, dz, true);
+    view.setFloat32(324, 0, true);
+
+    const magic = 'n+1\0';
+    for (let i = 0; i < 4; i++) view.setUint8(344 + i, magic.charCodeAt(i));
+
+    if (dtype === 2) {
+        const arr = new Uint8Array(buf, voxOffset, nVoxels);
+        for (let i = 0; i < nVoxels; i++) arr[i] = data[i];
+    } else if (dtype === 16) {
+        const arr = new Float32Array(buf, voxOffset, nVoxels);
+        for (let i = 0; i < nVoxels; i++) arr[i] = data[i];
+    }
+    return buf;
+}
+
+async function gzipBuffer(buf) {
+    const cs = new CompressionStream('gzip');
+    const stream = new Blob([buf]).stream().pipeThrough(cs);
+    return new Response(stream).arrayBuffer();
+}
+
+// Map a 224x224 label back onto (rows, cols): inverse of the worker's
+// center-crop/pad + resize (nearest-neighbor).
+function restoreLabelToOriginal(lbl224, rows, cols, pixelSpacing) {
+    const STD_SP = 350.0 / 256.0;
+    const newRows = Math.round(rows * pixelSpacing[0] / STD_SP);
+    const newCols = Math.round(cols * pixelSpacing[1] / STD_SP);
+    const srcOffY = Math.max(0, Math.floor((newRows - STANDARD_SIZE) / 2));
+    const srcOffX = Math.max(0, Math.floor((newCols - STANDARD_SIZE) / 2));
+    const dstOffY = Math.max(0, Math.floor((STANDARD_SIZE - newRows) / 2));
+    const dstOffX = Math.max(0, Math.floor((STANDARD_SIZE - newCols) / 2));
+    const copyH = Math.min(newRows, STANDARD_SIZE);
+    const copyW = Math.min(newCols, STANDARD_SIZE);
+
+    const lblResized = new Uint8Array(newRows * newCols);
+    for (let y = 0; y < copyH; y++) {
+        for (let x = 0; x < copyW; x++) {
+            lblResized[(srcOffY + y) * newCols + (srcOffX + x)] =
+                lbl224[(dstOffY + y) * STANDARD_SIZE + (dstOffX + x)];
+        }
+    }
+
+    const out = new Uint8Array(rows * cols);
+    if (newRows === rows && newCols === cols) {
+        out.set(lblResized);
+        return out;
+    }
+    const sy = newRows / rows, sx = newCols / cols;
+    for (let y = 0; y < rows; y++) {
+        const srcY = Math.min(newRows - 1, Math.max(0, Math.floor((y + 0.5) * sy)));
+        for (let x = 0; x < cols; x++) {
+            const srcX = Math.min(newCols - 1, Math.max(0, Math.floor((x + 0.5) * sx)));
+            out[y * cols + x] = lblResized[srcY * newCols + srcX];
+        }
+    }
+    return out;
+}
+
+// ============================================================
+// Download Results
+// ============================================================
+document.getElementById('downloadBtn').addEventListener('click', async () => {
+    if (!allLabels || !dicomData || !lastMetrics) return;
+    const contrast = document.getElementById('contrastSelect').value;
+    const { nSlices, nPhases, rows, cols, pixelSpacing, sliceThickness } = dicomData;
+
+    setStatus('Preparing download...');
+
+    const labelData = new Uint8Array(nPhases * nSlices * rows * cols);
+    for (let pha = 0; pha < nPhases; pha++) {
+        for (let sli = 0; sli < nSlices; sli++) {
+            const restored = restoreLabelToOriginal(allLabels[sli][pha], rows, cols, pixelSpacing);
+            const offset = (pha * nSlices + sli) * rows * cols;
+            labelData.set(restored, offset);
+        }
+    }
+    const labelDims = nPhases > 1 ? [cols, rows, nSlices, nPhases] : [cols, rows, nSlices];
+    const labelPixdim = nPhases > 1
+        ? [pixelSpacing[1], pixelSpacing[0], sliceThickness, 1.0]
+        : [pixelSpacing[1], pixelSpacing[0], sliceThickness];
+    const labelNifti = createNifti1(labelData, labelDims, labelPixdim, 2);
+
+    const imageData = new Float32Array(nPhases * nSlices * rows * cols);
+    for (let pha = 0; pha < nPhases; pha++) {
+        for (let sli = 0; sli < nSlices; sli++) {
+            const offset = (pha * nSlices + sli) * rows * cols;
+            const pixels = dicomData.images[sli][pha];
+            for (let i = 0; i < rows * cols; i++) imageData[offset + i] = pixels[i];
+        }
+    }
+    const imageDims = nPhases > 1 ? [cols, rows, nSlices, nPhases] : [cols, rows, nSlices];
+    const imagePixdim = nPhases > 1
+        ? [pixelSpacing[1], pixelSpacing[0], sliceThickness, 1.0]
+        : [pixelSpacing[1], pixelSpacing[0], sliceThickness];
+    const imageNifti = createNifti1(imageData, imageDims, imagePixdim, 16);
+
+    const escapeCsv = (s) => {
+        const v = String(s);
+        return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+    };
+    let csv = 'Metric,Value\n';
+    for (const [k, v] of lastMetrics) {
+        csv += `${escapeCsv(k)},${escapeCsv(v)}\n`;
+    }
+
+    const [imageGz, labelGz] = await Promise.all([
+        gzipBuffer(imageNifti),
+        gzipBuffer(labelNifti),
+    ]);
+
+    const labelLegend = contrast === 'cine'
+        ? '0 - background\n1 - LV cavity\n2 - LV myocardium\n3 - RV cavity\n'
+        : '0 - background\n1 - LV cavity\n2 - LV myocardium (normal)\n3 - scar\n4 - microvascular obstruction (MVO)\n';
+    const readme =
+        'CMR Segmentation results\n' +
+        '========================\n\n' +
+        `Contrast: ${contrast}\n` +
+        `Volume shape (cols, rows, slices${nPhases > 1 ? ', phases' : ''}): ` +
+        `${cols}, ${rows}, ${nSlices}${nPhases > 1 ? ', ' + nPhases : ''}\n\n` +
+        'Files\n-----\n' +
+        '  images.nii.gz       Input image volume (float32, NIfTI-1, gzip-compressed)\n' +
+        '  labels.nii.gz       Segmentation labels (uint8, NIfTI-1, gzip-compressed; same dims as images)\n' +
+        '  measurements.csv    Same metrics table shown on the website\n\n' +
+        'Label values\n------------\n' + labelLegend;
+
+    const zip = new JSZip();
+    zip.file('images.nii.gz', imageGz);
+    zip.file('labels.nii.gz', labelGz);
+    zip.file('measurements.csv', csv);
+    zip.file('README.txt', readme);
+
+    const zipBlob = await zip.generateAsync({ type: 'blob' });
+    const url = URL.createObjectURL(zipBlob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${contrast}_results.zip`;
+    a.click();
+    URL.revokeObjectURL(url);
+
+    setStatus(`Downloaded: ${contrast}_results.zip`);
+});
+
+function setStatus(msg) { document.getElementById('status').textContent = msg; }
+</script>
+</body>
+</html>

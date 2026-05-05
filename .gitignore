@@ -1,0 +1,10 @@
+.DS_Store
+*.swp
+*~
+.ipynb_checkpoints/
+
+# Rust source for the post-processing WASM is kept private; only the built
+# artifacts (cmrseg_pp.js + cmrseg_pp_bg.wasm) under pp/ ship to the browser.
+wasm/
+pp/*.d.ts
+pp/package.json
