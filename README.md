@@ -26,15 +26,6 @@ python3 -m http.server 8080
 
 Then open <http://localhost:8080>.
 
-The post-processing kernels live in `wasm/` (Rust) and are compiled to
-WebAssembly with `wasm-pack`. The shipped artefacts in `pp/` (`cmrseg_pp.js`
-and `cmrseg_pp_bg.wasm`) are committed; rebuild from source with:
-
-```bash
-cd wasm
-wasm-pack build --release --target no-modules --out-dir ../pp --out-name cmrseg_pp
-```
-
 ## Deployment
 
 The site is a fully static set of files (HTML, JS, WASM, ONNX). It can be
