@@ -11,7 +11,7 @@ or measurements are transmitted to any server.
 | Contrast | Architecture | Parameters | ONNX size | Mean Dice |
 |---|---|---:|---:|---:|
 | Cine | MobileUNetV2, KD (T=3.0, W=0.99) on ACDC + M&Ms | 2.09M | 8.3 MB | 0.883 |
-| Scar / LGE | Teacher (residual-encoder U-Net) on EMIDEC + MYOSAIQ | 9.22M | 36.9 MB (split into two parts) | — |
+| Scar / LGE | MobileUNetV2, KD (T=3.0, W=0.99) on EMIDEC + MyoPS + MYOSAIQ + STACOM-LGE | 2.09M | 8.3 MB | 0.754 |
 
 Browser inference for the cine student is ~50–100 ms per frame on a typical
 laptop (single-threaded WebAssembly with SIMD).
