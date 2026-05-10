@@ -28,17 +28,37 @@ let wasm_bindgen = (function(exports) {
     exports.postprocess_cine = postprocess_cine;
 
     /**
+     * Per-slice scar / MVO post-processing — production PP_FINAL recipe.
+     *
+     * Steps applied in order to a single (H, W) label slice:
+     *   1. **Contour cleanup + touch-myo** — clean LV epi/endo contours
+     *      and keep scar (class 3) / MVO (class 4) only where they sit
+     *      inside the cleaned myocardium. This is the existing per-frame
+     *      behaviour.
+     *   2. **Size-aware 2D-CC drop** — drop scar components smaller than
+     *      `k_scar` voxels and MVO components smaller than `k_mvo` voxels
+     *      (8-connectivity). Dropped voxels become class 2.
+     *   3. **MVO toggle** — when `include_mvo == false`, any surviving
+     *      class 4 voxel becomes class 2. For non-ischaemic cohorts.
+     *
+     * All steps are 2D — slice-to-slice re-centering means a 3D
+     * connected-component pass can fuse spatially-disjoint regions or
+     * split true components. See `Scar/scar_experiments.py:PP_FINAL` for
+     * the canonical Python implementation and threshold rationale.
      * @param {Uint8Array} labels
      * @param {number} h
      * @param {number} w
+     * @param {number} k_scar
+     * @param {number} k_mvo
+     * @param {boolean} include_mvo
      * @returns {Uint8Array}
      */
-    function postprocess_scar_frame(labels, h, w) {
+    function postprocess_scar_frame(labels, h, w, k_scar, k_mvo, include_mvo) {
         try {
             const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
             const ptr0 = passArray8ToWasm0(labels, wasm.__wbindgen_export);
             const len0 = WASM_VECTOR_LEN;
-            wasm.postprocess_scar_frame(retptr, ptr0, len0, h, w);
+            wasm.postprocess_scar_frame(retptr, ptr0, len0, h, w, k_scar, k_mvo, include_mvo);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
             var v2 = getArrayU8FromWasm0(r0, r1).slice();

@@ -9,6 +9,10 @@ ort.env.wasm.simd = true;
 
 let session = null;
 let contrast = null;
+let includeMvo = true;   // overridable via 'set_include_mvo' message
+// PP_FINAL — mirrors Scar/scar_experiments.py. All 2D, per-slice.
+const K_SCAR = 20;
+const K_MVO = 15;
 const ppReady = wasm_bindgen('pp/cmrseg_pp_bg.wasm');
 
 self.onmessage = async (e) => {
@@ -22,6 +26,7 @@ self.onmessage = async (e) => {
                 graphOptimizationLevel: 'all',
             });
             contrast = msg.contrast || null;
+            if (typeof msg.includeMvo === 'boolean') includeMvo = msg.includeMvo;
             self.postMessage({ type: 'loaded' });
         } catch (err) {
             self.postMessage({ type: 'load_error', error: err.message });
@@ -33,6 +38,12 @@ self.onmessage = async (e) => {
         contrast = msg.contrast;
         return;
     }
+
+    if (msg.type === 'set_include_mvo') {
+        includeMvo = !!msg.includeMvo;
+        return;
+    }
+
 
     if (msg.type === 'infer') {
         try {
@@ -61,7 +72,7 @@ self.onmessage = async (e) => {
 
             let cleaned;
             if (contrast === 'cine') cleaned = wasm_bindgen.postprocess_cine(labelMap, H, W);
-            else if (contrast === 'scar') cleaned = wasm_bindgen.postprocess_scar_frame(labelMap, H, W);
+            else if (contrast === 'scar') cleaned = wasm_bindgen.postprocess_scar_frame(labelMap, H, W, K_SCAR, K_MVO, includeMvo);
             else cleaned = labelMap;
 
             self.postMessage(

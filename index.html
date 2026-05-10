@@ -147,7 +147,14 @@
         <div class="legend-item"><div class="legend-color" style="background:#e94560;"></div> LV Cavity</div>
         <div class="legend-item"><div class="legend-color" style="background:#4ecca3;"></div> Normal Myocardium</div>
         <div class="legend-item"><div class="legend-color" style="background:#f0e130;"></div> Scar</div>
-        <div class="legend-item"><div class="legend-color" style="background:#0f3460;"></div> MVO</div>
+        <div class="legend-item" id="mvoLegendItem"><div class="legend-color" style="background:#0f3460;"></div> MVO</div>
+    </div>
+    <div id="scarOptions" style="display:none;text-align:center;margin:8px 0;font-size:0.9em;color:#bbb;">
+        <label style="cursor:pointer;">
+            <input type="checkbox" id="includeMvo" checked style="vertical-align:middle;">
+            Include MVO / no-reflow
+            <span style="color:#888;font-size:0.85em;">— turn off for non-ischaemic cohorts (HCM, DCM, myocarditis)</span>
+        </label>
     </div>
 
     <div style="display:flex;justify-content:center;gap:40px;margin:12px 0;">
@@ -239,7 +246,11 @@ function loadModelInWorker(buf, contrast) {
     return new Promise((resolve, reject) => {
         modelLoadResolver = resolve;
         modelLoadRejecter = reject;
-        worker.postMessage({ type: 'load', modelBuffer: buf, contrast }, [buf]);
+        const includeMvo = document.getElementById('includeMvo').checked;
+        worker.postMessage(
+            { type: 'load', modelBuffer: buf, contrast, includeMvo },
+            [buf],
+        );
     });
 }
 
@@ -254,6 +265,7 @@ function inferInWorker(pixels, rows, cols, pixelSpacing) {
         );
     });
 }
+
 
 // ============================================================
 // Model Loading (auto, based on contrast)
@@ -309,15 +321,31 @@ async function loadModel(contrast) {
 }
 
 window.addEventListener('load', () => {
-    loadModel(document.getElementById('contrastSelect').value);
+    const contrast = document.getElementById('contrastSelect').value;
+    document.getElementById('cineLegend').style.display = contrast === 'cine' ? 'flex' : 'none';
+    document.getElementById('scarLegend').style.display = contrast === 'scar' ? 'flex' : 'none';
+    document.getElementById('scarOptions').style.display = contrast === 'scar' ? 'block' : 'none';
+    loadModel(contrast);
 });
 
 document.getElementById('contrastSelect').addEventListener('change', async () => {
     const contrast = document.getElementById('contrastSelect').value;
     document.getElementById('cineLegend').style.display = contrast === 'cine' ? 'flex' : 'none';
     document.getElementById('scarLegend').style.display = contrast === 'scar' ? 'flex' : 'none';
+    document.getElementById('scarOptions').style.display = contrast === 'scar' ? 'block' : 'none';
     clearResults();
     await loadModel(contrast);
+});
+
+document.getElementById('includeMvo').addEventListener('change', (e) => {
+    const include = e.target.checked;
+    if (worker) worker.postMessage({ type: 'set_include_mvo', includeMvo: include });
+    document.getElementById('mvoLegendItem').style.display = include ? 'flex' : 'none';
+    // Re-rendering existing labels would require re-running inference; the
+    // toggle takes effect on the next "Run Segmentation" pass. Surface this:
+    setStatus(include
+        ? 'MVO predictions enabled. Re-run segmentation to apply.'
+        : 'MVO predictions disabled (non-ischaemic mode). Re-run segmentation to apply.');
 });
 
 function checkReady() {
@@ -635,33 +663,10 @@ document.getElementById('runBtn').addEventListener('click', async () => {
         return;
     }
 
-    // Volume-wide scar/MVO false-positive filter (port of _postprocess_scar tail)
-    if (contrast === 'scar') {
-        const MIN_SCAR_PIXELS = 50;
-        let scarTotal = 0, mvoTotal = 0;
-        for (let s = 0; s < nSlices; s++) {
-            for (let p = 0; p < nPhases; p++) {
-                const lbl = allLabels[s][p];
-                for (let i = 0; i < lbl.length; i++) {
-                    if (lbl[i] === 3) scarTotal++;
-                    else if (lbl[i] === 4) mvoTotal++;
-                }
-            }
-        }
-        const dropScar = scarTotal < MIN_SCAR_PIXELS;
-        const dropMvo = mvoTotal < MIN_SCAR_PIXELS;
-        if (dropScar || dropMvo) {
-            for (let s = 0; s < nSlices; s++) {
-                for (let p = 0; p < nPhases; p++) {
-                    const lbl = allLabels[s][p];
-                    for (let i = 0; i < lbl.length; i++) {
-                        if (dropScar && lbl[i] === 3) lbl[i] = 2;
-                        if (dropMvo && lbl[i] === 4) lbl[i] = 2;
-                    }
-                }
-            }
-        }
-    }
+    // PP_FINAL is fully per-slice (touch-myo + 2D-CC + MVO toggle) and is
+    // applied inside `postprocess_scar_frame` in the worker. No volume
+    // stage is needed — keeping everything 2D is intentional, since
+    // slice re-centering can mis-align scar/MVO regions across slices.
 
     const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
     setStatus(`Done in ${elapsed}s. ${nSlices} slices x ${nPhases} phases = ${total} inferences.`);
