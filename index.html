@@ -702,7 +702,7 @@ function calculateCineMetrics() {
     const rvVolumes = new Float32Array(nPhases);
     for (let pha = 0; pha < nPhases; pha++) {
         for (let sli = 0; sli < nSlices; sli++) {
-            const lbl = allLabels[sli][pha];
+            const lbl = restoreLabelToOriginal(allLabels[sli][pha], rows, cols, pixelSpacing);
             let lvCount = 0, rvCount = 0;
             for (let i = 0; i < lbl.length; i++) {
                 if (lbl[i] === 1) lvCount++;
@@ -761,7 +761,7 @@ function calculateScarMetrics() {
     let myoTotal = 0, scarTotal = 0, mvoTotal = 0;
     for (let sli = 0; sli < nSlices; sli++) {
         for (let pha = 0; pha < nPhases; pha++) {
-            const lbl = allLabels[sli][pha];
+            const lbl = restoreLabelToOriginal(allLabels[sli][pha], rows, cols, pixelSpacing);
             for (let i = 0; i < lbl.length; i++) {
                 if (lbl[i] === 2) myoTotal++;
                 if (lbl[i] === 3) scarTotal++;
@@ -968,6 +968,7 @@ async function gzipBuffer(buf) {
 
 // Map a 224x224 label back onto (rows, cols): inverse of the worker's
 // center-crop/pad + resize (nearest-neighbor).
+// Metrics and NIfTI export use this same grid and DICOM voxel spacing.
 function restoreLabelToOriginal(lbl224, rows, cols, pixelSpacing) {
     const STD_SP = 350.0 / 256.0;
     const newRows = Math.round(rows * pixelSpacing[0] / STD_SP);
